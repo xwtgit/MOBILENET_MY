@@ -1,0 +1,11 @@
+data/
+outputs/
+*.mat
+*.pth
+*.pt
+*.ckpt
+*.onnx
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+vision/.git.local-backup/
