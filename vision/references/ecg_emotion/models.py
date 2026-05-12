@@ -1,5 +1,6 @@
 import copy
 import math
+from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -766,6 +767,175 @@ def resnet50_1d(
     )
 
 
+class _DenseLayer1d(nn.Module):
+    def __init__(
+        self,
+        num_input_features: int,
+        growth_rate: int,
+        bn_size: int,
+        drop_rate: float,
+        norm_layer: Callable[..., nn.Module],
+    ) -> None:
+        super().__init__()
+        self.norm1 = norm_layer(num_input_features)
+        self.relu1 = nn.ReLU(inplace=True)
+        self.conv1 = nn.Conv1d(num_input_features, bn_size * growth_rate, kernel_size=1, stride=1, bias=False)
+        self.norm2 = norm_layer(bn_size * growth_rate)
+        self.relu2 = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv1d(bn_size * growth_rate, growth_rate, kernel_size=3, stride=1, padding=1, bias=False)
+        self.drop_rate = float(drop_rate)
+
+    def forward(self, input: Tensor) -> Tensor:
+        new_features = self.conv1(self.relu1(self.norm1(input)))
+        new_features = self.conv2(self.relu2(self.norm2(new_features)))
+        if self.drop_rate > 0:
+            new_features = nn.functional.dropout(new_features, p=self.drop_rate, training=self.training)
+        return new_features
+
+
+class _DenseBlock1d(nn.ModuleDict):
+    def __init__(
+        self,
+        num_layers: int,
+        num_input_features: int,
+        bn_size: int,
+        growth_rate: int,
+        drop_rate: float,
+        norm_layer: Callable[..., nn.Module],
+    ) -> None:
+        super().__init__()
+        for i in range(num_layers):
+            layer = _DenseLayer1d(
+                num_input_features + i * growth_rate,
+                growth_rate=growth_rate,
+                bn_size=bn_size,
+                drop_rate=drop_rate,
+                norm_layer=norm_layer,
+            )
+            self.add_module(f"denselayer{i + 1}", layer)
+
+    def forward(self, init_features: Tensor) -> Tensor:
+        features = [init_features]
+        for _, layer in self.items():
+            new_features = layer(torch.cat(features, 1))
+            features.append(new_features)
+        return torch.cat(features, 1)
+
+
+class _Transition1d(nn.Sequential):
+    def __init__(
+        self,
+        num_input_features: int,
+        num_output_features: int,
+        norm_layer: Callable[..., nn.Module],
+    ) -> None:
+        super().__init__(
+            OrderedDict(
+                [
+                    ("norm", norm_layer(num_input_features)),
+                    ("relu", nn.ReLU(inplace=True)),
+                    ("conv", nn.Conv1d(num_input_features, num_output_features, kernel_size=1, stride=1, bias=False)),
+                    ("pool", nn.AvgPool1d(kernel_size=2, stride=2)),
+                ]
+            )
+        )
+
+
+class DenseNet1D(nn.Module):
+    def __init__(
+        self,
+        growth_rate: int = 32,
+        block_config: tuple[int, int, int, int] = (6, 12, 32, 32),
+        num_init_features: int = 64,
+        bn_size: int = 4,
+        drop_rate: float = 0.0,
+        in_channels: int = 2,
+        num_classes: int = 4,
+        norm_layer: Callable[..., nn.Module] | None = None,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm1d
+
+        self.features = nn.Sequential(
+            OrderedDict(
+                [
+                    (
+                        "conv0",
+                        nn.Conv1d(
+                            in_channels,
+                            num_init_features,
+                            kernel_size=7,
+                            stride=2,
+                            padding=3,
+                            bias=False,
+                        ),
+                    ),
+                    ("norm0", norm_layer(num_init_features)),
+                    ("relu0", nn.ReLU(inplace=True)),
+                    ("pool0", nn.MaxPool1d(kernel_size=3, stride=2, padding=1)),
+                ]
+            )
+        )
+
+        num_features = num_init_features
+        for i, num_layers in enumerate(block_config):
+            block = _DenseBlock1d(
+                num_layers=num_layers,
+                num_input_features=num_features,
+                bn_size=bn_size,
+                growth_rate=growth_rate,
+                drop_rate=drop_rate,
+                norm_layer=norm_layer,
+            )
+            self.features.add_module(f"denseblock{i + 1}", block)
+            num_features = num_features + num_layers * growth_rate
+            if i != len(block_config) - 1:
+                transition = _Transition1d(
+                    num_input_features=num_features,
+                    num_output_features=num_features // 2,
+                    norm_layer=norm_layer,
+                )
+                self.features.add_module(f"transition{i + 1}", transition)
+                num_features = num_features // 2
+
+        self.features.add_module("norm5", norm_layer(num_features))
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.classifier = nn.Linear(num_features, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight)
+            elif isinstance(m, (nn.BatchNorm1d, nn.GroupNorm)):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Linear):
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x: Tensor) -> Tensor:
+        features = self.features(x)
+        out = nn.functional.relu(features, inplace=True)
+        out = self.avgpool(out)
+        out = torch.flatten(out, 1)
+        return self.classifier(out)
+
+
+def densenet169_1d(
+    in_channels: int = 2,
+    num_classes: int = 4,
+    drop_rate: float = 0.0,
+) -> DenseNet1D:
+    return DenseNet1D(
+        growth_rate=32,
+        block_config=(6, 12, 32, 32),
+        num_init_features=64,
+        bn_size=4,
+        drop_rate=drop_rate,
+        in_channels=in_channels,
+        num_classes=num_classes,
+    )
+
+
 def build_model(
     name: str,
     in_channels: int = 2,
@@ -789,7 +959,9 @@ def build_model(
             num_classes=num_classes,
             dropout=dropout,
             stochastic_depth_prob=stochastic_depth_prob,
-        )
+    )
     if name == "resnet50_1d":
         return resnet50_1d(in_channels=in_channels, num_classes=num_classes)
+    if name == "densenet169_1d":
+        return densenet169_1d(in_channels=in_channels, num_classes=num_classes)
     raise ValueError(f"Unsupported model: {name}")

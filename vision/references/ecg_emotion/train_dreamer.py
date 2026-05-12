@@ -272,7 +272,7 @@ def get_args_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default="mobilenet_v3_small_1d",
-        choices=["mobilenet_v3_small_1d", "efficientnet_v2_s_1d", "resnet50_1d"],
+        choices=["mobilenet_v3_small_1d", "efficientnet_v2_s_1d", "resnet50_1d", "densenet169_1d"],
         help="1D model architecture",
     )
     parser.add_argument("--split-json", default=None, type=str, help="Optional subject split JSON with train/val/test keys")

@@ -1,6 +1,6 @@
 # ECG emotion recognition with 1D CNN models
 
-This reference trains 1D CNN baselines on DREAMER ECG signals for four-quadrant valence-arousal emotion recognition. It currently supports `mobilenet_v3_small_1d`, `efficientnet_v2_s_1d`, and `resnet50_1d`.
+This reference trains 1D CNN baselines on DREAMER ECG signals for four-quadrant valence-arousal emotion recognition. It currently supports `mobilenet_v3_small_1d`, `efficientnet_v2_s_1d`, `resnet50_1d`, and `densenet169_1d`.
 
 ## Task
 
@@ -67,6 +67,19 @@ python vision/references/ecg_emotion/train_dreamer.py `
   --lr 1e-4
 ```
 
+DenseNet-169 is a deeper DenseNet baseline adapted to 1D ECG. On a server with RTX 4090 GPUs, start with `--batch-size 8 --lr 1e-4`:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python3 vision/references/ecg_emotion/train_dreamer.py \
+  --dreamer-mat data/DREAMER.mat \
+  --output-dir outputs/dreamer_densenet169_seed0 \
+  --model densenet169_1d \
+  --epochs 100 \
+  --batch-size 8 \
+  --seeds 0 \
+  --lr 1e-4
+```
+
 For a fair single-seed comparison against an existing MobileNet run, reuse its subject split:
 
 ```powershell
@@ -92,6 +105,20 @@ python vision/references/ecg_emotion/train_dreamer.py `
   --epochs 100 `
   --batch-size 1 `
   --seeds 0 `
+  --lr 1e-4
+```
+
+For the same fair split with DenseNet-169:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python3 vision/references/ecg_emotion/train_dreamer.py \
+  --dreamer-mat data/DREAMER.mat \
+  --split-json outputs/dreamer_mobilenetv3_seed0/seed_0/subject_split.json \
+  --output-dir outputs/dreamer_densenet169_seed0 \
+  --model densenet169_1d \
+  --epochs 100 \
+  --batch-size 8 \
+  --seeds 0 \
   --lr 1e-4
 ```
 
@@ -127,4 +154,4 @@ The top-level output directory writes:
 
 ## Notes
 
-These are 1D adaptations for raw ECG. They intentionally do not modify `torchvision.models.mobilenetv3` or `torchvision.models.efficientnet`, which remain image classification implementations.
+These are 1D adaptations for raw ECG. They intentionally do not modify `torchvision.models.mobilenetv3`, `torchvision.models.efficientnet`, or `torchvision.models.densenet`, which remain image classification implementations.
